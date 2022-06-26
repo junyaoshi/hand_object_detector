@@ -220,7 +220,14 @@ if __name__ == '__main__':
         # processing multiple image dirs specified by their parent dir
         image_dirs = [join(args.image_parent_dir, d) for d in os.listdir(args.image_parent_dir)]
 
+    print(f'Processing {len(image_dirs)} frame dirs.')
     for image_dir in tqdm(image_dirs, desc='Going through image directories...'):
+        video_num = image_dir.split('/')[-1]
+        video_json_dir = join(args.json_save_dir, video_num)
+        if os.path.exists(video_json_dir):
+            continue
+        os.makedirs(video_json_dir)
+
         # initilize the tensor holder here.
         im_data = torch.FloatTensor(1)
         im_info = torch.FloatTensor(1)
@@ -466,7 +473,5 @@ if __name__ == '__main__':
                 else:
                     print("error")
 
-                video_num = image_dir.split('/')[-1]
-                os.makedirs(join(args.json_save_dir, video_num), exist_ok=True)
-                with open(join(args.json_save_dir, video_num, f'{frame}.json'), 'w') as outfile:
+                with open(join(video_json_dir, f'{frame}.json'), 'w') as outfile:
                     json.dump(js, outfile)
