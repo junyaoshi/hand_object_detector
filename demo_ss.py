@@ -43,6 +43,7 @@ from model.utils.blob import im_list_to_blob
 from model.faster_rcnn.vgg16 import vgg16
 from model.faster_rcnn.resnet import resnet
 import pdb
+import h5py
 
 try:
     xrange  # Python 2
@@ -118,6 +119,12 @@ def parse_args():
     parser.add_argument('--thresh_obj', default=0.5,
                         type=float,
                         required=False)
+    parser.add_argument('--save_h5', action='store_true',
+                        help='if true, save prediction of each video to h5; '
+                             'otherwise, save prediction of each frame to json')
+    parser.add_argument('--hand_demos', action='store_true',
+                        help='if true, data are hand demos; this will affect how frame directories are located.'
+                             'In this scenario, use --image_dir instead of --image_parent_dir')
 
     args = parser.parse_args()
     return args
@@ -165,6 +172,8 @@ def _get_image_blob(im):
 
 if __name__ == '__main__':
     args = parse_args()
+    if args.save_h5:
+        assert args.hand_demos, "Not implemented for other dataset"
 
     # print('Called with args:')
     # print(args)
@@ -214,19 +223,36 @@ if __name__ == '__main__':
     print('load model successfully!')
 
     if not args.image_parent_dir:
-        # processing a single image dir
-        image_dirs = [args.image_dir]
+        if args.hand_demos:
+            task_dirs = [join(args.image_dir, d) for d in os.listdir(args.image_dir)]
+            image_dirs = []
+            for task_dir in task_dirs:
+                image_dirs.extend([join(task_dir, d, 'rgb') for d in os.listdir(task_dir)])
+        else:
+            # processing a single image dir
+            image_dirs = [args.image_dir]
     else:
         # processing multiple image dirs specified by their parent dir
         image_dirs = [join(args.image_parent_dir, d) for d in os.listdir(args.image_parent_dir)]
 
-    print(f'Processing {len(image_dirs)} frame dirs.')
-    for image_dir in tqdm(image_dirs, desc='Going through image directories...'):
+    print(f'Processing {len(image_dirs)} frame dirs to extract bbox.')
+    for image_dir in tqdm(image_dirs, desc=f'Going through {len(image_dirs)} image directories to extract bbox...'):
         video_num = image_dir.split('/')[-1]
-        video_json_dir = join(args.json_save_dir, video_num)
-        if os.path.exists(video_json_dir):
-            continue
-        os.makedirs(video_json_dir)
+        h5_file = None
+        if args.save_h5:
+            video_h5_path = join(os.path.dirname(image_dir), 'data.h5')
+            try:
+                h5_file = h5py.File(video_h5_path, "a")
+            except OSError as e:
+                print(f'Encountered error: {e} \nwhile processing h5 file: {video_h5_path} '
+                      f'\nDeleting and recreating corrupted file.')
+                os.remove(video_h5_path)
+                h5_file = h5py.File(video_h5_path, "a")
+        else:
+            video_json_dir = join(args.json_save_dir, video_num)
+            if os.path.exists(video_json_dir):
+                continue
+            os.makedirs(video_json_dir)
 
         # initilize the tensor holder here.
         im_data = torch.FloatTensor(1)
@@ -278,6 +304,10 @@ if __name__ == '__main__':
                 total_tic = time.time()
                 if webcam_num == -1:
                     num_images -= 1
+
+                if args.save_h5:
+                    if str(imglist[num_images][:-4]) in h5_file:
+                        continue
 
                 # Get image from the webcam
                 if webcam_num >= 0:
@@ -473,5 +503,18 @@ if __name__ == '__main__':
                 else:
                     print("error")
 
-                with open(join(video_json_dir, f'{frame}.json'), 'w') as outfile:
-                    json.dump(js, outfile)
+                if args.save_h5:
+                    frame_group = h5_file[frame] if frame in h5_file else h5_file.create_group(frame)
+                    frame_group.attrs['image_path'] = join(image_dir, f'{frame}.jpg')
+                    frame_group.create_dataset('body_bbox_list', data=[[]])
+                    frame_group.create_dataset('hand_bbox_list/left_hand',
+                                               data=js["hand_bbox_list"][0]["left_hand"])
+                    frame_group.create_dataset('hand_bbox_list/right_hand',
+                                               data=js["hand_bbox_list"][0]["right_hand"])
+                else:
+                    with open(join(video_json_dir, f'{frame}.json'), 'w') as outfile:
+                        json.dump(js, outfile)
+
+        if args.save_h5:
+            h5_file.close()
+
