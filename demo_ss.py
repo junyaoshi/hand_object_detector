@@ -122,9 +122,6 @@ def parse_args():
     parser.add_argument('--save_h5', action='store_true',
                         help='if true, save prediction of each video to h5; '
                              'otherwise, save prediction of each frame to json')
-    parser.add_argument('--hand_demos', action='store_true',
-                        help='if true, data are hand demos; this will affect how frame directories are located.'
-                             'In this scenario, use --image_dir instead of --image_parent_dir')
 
     args = parser.parse_args()
     return args
@@ -172,8 +169,6 @@ def _get_image_blob(im):
 
 if __name__ == '__main__':
     args = parse_args()
-    if args.save_h5:
-        assert args.hand_demos, "Not implemented for other dataset"
 
     # print('Called with args:')
     # print(args)
@@ -222,25 +217,23 @@ if __name__ == '__main__':
 
     print('load model successfully!')
 
-    if not args.image_parent_dir:
-        if args.hand_demos:
-            task_dirs = [join(args.image_dir, d) for d in os.listdir(args.image_dir)]
-            image_dirs = []
-            for task_dir in task_dirs:
-                image_dirs.extend([join(task_dir, d, 'rgb') for d in os.listdir(task_dir)])
-        else:
-            # processing a single image dir
-            image_dirs = [args.image_dir]
-    else:
+    if args.image_parent_dir:
         # processing multiple image dirs specified by their parent dir
         image_dirs = [join(args.image_parent_dir, d) for d in os.listdir(args.image_parent_dir)]
+    else:
+        # processing a single image dir
+        image_dirs = [args.image_dir]
+
+    if args.save_h5:
+        h5_dir = join(os.path.dirname(args.image_parent_dir), 'bbs_h5')
+        os.makedirs(h5_dir, exist_ok=True)
 
     print(f'Processing {len(image_dirs)} frame dirs to extract bbox.')
     for image_dir in tqdm(image_dirs, desc=f'Going through {len(image_dirs)} image directories to extract bbox...'):
         video_num = image_dir.split('/')[-1]
         h5_file = None
         if args.save_h5:
-            video_h5_path = join(os.path.dirname(image_dir), 'data.h5')
+            video_h5_path = join(h5_dir, f'{video_num}.h5')
             try:
                 h5_file = h5py.File(video_h5_path, "a")
             except OSError as e:
