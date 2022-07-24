@@ -228,6 +228,7 @@ if __name__ == '__main__':
         h5_dir = join(os.path.dirname(args.image_parent_dir), 'bbs_h5')
         os.makedirs(h5_dir, exist_ok=True)
 
+    n_processed, n_nobbox, n_skipped = 0, 0, 0
     print(f'Processing {len(image_dirs)} frame dirs to extract bbox.')
     for image_dir in tqdm(image_dirs, desc=f'Going through {len(image_dirs)} image directories to extract bbox...'):
         video_num = image_dir.split('/')[-1]
@@ -244,6 +245,7 @@ if __name__ == '__main__':
         else:
             video_json_dir = join(args.json_save_dir, video_num)
             if os.path.exists(video_json_dir):
+                n_skipped += len(os.listdir(image_dir))
                 continue
             os.makedirs(video_json_dir)
 
@@ -458,6 +460,7 @@ if __name__ == '__main__':
             for frame in bbs:
                 if bbs[frame] is None:
                     # print(f'No bounding box detected for {frame}.')
+                    n_nobbox += 1
                     continue
                 js = {"image_path": join(image_dir, f'{frame}.jpg'),
                       "body_bbox_list": [[]]}
@@ -507,7 +510,13 @@ if __name__ == '__main__':
                 else:
                     with open(join(video_json_dir, f'{frame}.json'), 'w') as outfile:
                         json.dump(js, outfile)
+                    n_processed += 1
 
         if args.save_h5:
             h5_file.close()
 
+    print(f'Converted frames to bounding boxes. '
+          f'Total frames: {n_processed + n_nobbox + n_skipped}; '
+          f'Processed frames: {n_processed}; '
+          f'No bbox frames: {n_nobbox}; '
+          f'Skipped frames: {n_skipped}.')
