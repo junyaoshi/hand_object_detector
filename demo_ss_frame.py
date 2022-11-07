@@ -185,36 +185,35 @@ def extract_bbox_from_frame(
 
         scores = scores.squeeze()
         pred_boxes = pred_boxes.squeeze()
+        det_toc = time.time()
+        detect_time = det_toc - det_tic
+        misc_tic = time.time()
 
-    det_toc = time.time()
-    detect_time = det_toc - det_tic
-    misc_tic = time.time()
-
-    obj_dets, hand_dets = None, None
-    for j in xrange(1, len(pascal_classes)):
-        if pascal_classes[j] == 'hand':
-            inds = torch.nonzero(scores[:, j] > thresh_hand).view(-1)
-        elif pascal_classes[j] == 'targetobject':
-            inds = torch.nonzero(scores[:, j] > thresh_obj).view(-1)
-
-        # if there is det
-        if inds.numel() > 0:
-            cls_scores = scores[:, j][inds]
-            _, order = torch.sort(cls_scores, 0, True)
-            if class_agnostic:
-                cls_boxes = pred_boxes[inds, :]
-            else:
-                cls_boxes = pred_boxes[inds][:, j * 4:(j + 1) * 4]
-
-            cls_dets = torch.cat((cls_boxes, cls_scores.unsqueeze(1), contact_indices[inds],
-                                  offset_vector.squeeze(0)[inds], lr[inds]), 1)
-            cls_dets = cls_dets[order]
-            keep = nms(cls_boxes[order, :], cls_scores[order], cfg.TEST.NMS)
-            cls_dets = cls_dets[keep.view(-1).long()]
-            if pascal_classes[j] == 'targetobject':
-                obj_dets = cls_dets.cpu().numpy()
+        obj_dets, hand_dets = None, None
+        for j in xrange(1, len(pascal_classes)):
             if pascal_classes[j] == 'hand':
-                hand_dets = cls_dets.cpu().numpy()
+                inds = torch.nonzero(scores[:, j] > thresh_hand).view(-1)
+            elif pascal_classes[j] == 'targetobject':
+                inds = torch.nonzero(scores[:, j] > thresh_obj).view(-1)
+
+            # if there is det
+            if inds.numel() > 0:
+                cls_scores = scores[:, j][inds]
+                _, order = torch.sort(cls_scores, 0, True)
+                if class_agnostic:
+                    cls_boxes = pred_boxes[inds, :]
+                else:
+                    cls_boxes = pred_boxes[inds][:, j * 4:(j + 1) * 4]
+
+                cls_dets = torch.cat((cls_boxes, cls_scores.unsqueeze(1), contact_indices[inds],
+                                      offset_vector.squeeze(0)[inds], lr[inds]), 1)
+                cls_dets = cls_dets[order]
+                keep = nms(cls_boxes[order, :], cls_scores[order], cfg.TEST.NMS)
+                cls_dets = cls_dets[keep.view(-1).long()]
+                if pascal_classes[j] == 'targetobject':
+                    obj_dets = cls_dets.cpu().numpy()
+                if pascal_classes[j] == 'hand':
+                    hand_dets = cls_dets.cpu().numpy()
 
     misc_toc = time.time()
     nms_time = misc_toc - misc_tic
@@ -230,33 +229,23 @@ def extract_bbox_from_frame(
             print('No bounding box detected for this frame')
         success = False
     else:
-        json_info = {
-            "image_path": image_path,
-            "body_bbox_list": [[]]
-        }
+        json_info = {"image_path": image_path, "body_bbox_list": [[]]}
 
         if len(hand_dets) == 1:
             hand = [int(hand_dets[0][0]), int(hand_dets[0][1]),
                     int(hand_dets[0][2] - hand_dets[0][0]),
                     int(hand_dets[0][3] - hand_dets[0][1])]
+            contact = int(hand_dets[0][5])
             if hand_dets[0][9] == 0:
                 if verbose:
                     print('Detected left hand bounding box for this frame.')
-                json_info["hand_bbox_list"] = [
-                    {
-                        "left_hand": hand,
-                        "right_hand": [],
-                    }
-                ]
+                json_info["hand_bbox_list"] = [{"left_hand": hand, "right_hand": []}]
+                json_info["contact_list"] = [{"left_hand": contact, "right_hand": -1}]
             elif hand_dets[0][9] == 1:
                 if verbose:
                     print('Detected right hand bounding box for this frame.')
-                json_info["hand_bbox_list"] = [
-                    {
-                        "left_hand": [],
-                        "right_hand": hand,
-                    }
-                ]
+                json_info["hand_bbox_list"] = [{"left_hand": [],"right_hand": hand}]
+                json_info["contact_list"] = [{"left_hand": -1, "right_hand": contact}]
             else:
                 print(f"Error: unrecognized hand type: {hand_dets[0][9]}")
                 success = False
@@ -270,20 +259,14 @@ def extract_bbox_from_frame(
             hand2 = [int(hand_dets[1][0]), int(hand_dets[1][1]),
                      int(hand_dets[1][2] - hand_dets[1][0]),
                      int(hand_dets[1][3] - hand_dets[1][1])]
+            contact1 = int(hand_dets[0][5])
+            contact2 = int(hand_dets[1][5])
             if hand_dets[0][9] == 0:
-                json_info["hand_bbox_list"] = [
-                    {
-                        "left_hand": hand1,
-                        "right_hand": hand2,
-                    }
-                ]
+                json_info["hand_bbox_list"] = [{"left_hand": hand1, "right_hand": hand2}]
+                json_info["contact_list"] = [{"left_hand": contact1, "right_hand": contact2}]
             elif hand_dets[0][9] == 1:
-                json_info["hand_bbox_list"] = [
-                    {
-                        "left_hand": hand2,
-                        "right_hand": hand1,
-                    }
-                ]
+                json_info["hand_bbox_list"] = [{"left_hand": hand2, "right_hand": hand1}]
+                json_info["contact_list"] = [{"left_hand": contact2, "right_hand": contact1}]
             else:
                 print(f"Error: unrecognized hand type: {hand_dets[0][9]}")
                 success = False
@@ -310,7 +293,8 @@ def extract_bbox_from_frame(
 if __name__ == '__main__':
     task_dir = '/home/junyao/Datasets/something_something_hand_demos_same_hand/move_up'
     image_path = osp.join(task_dir, 'frames/1/frame0.jpg')
-    json_path = osp.join(task_dir, 'bbs_json/1/frame0.json')
+    # json_path = osp.join(task_dir, 'bbs_json/1/frame0.json')
+    json_path = None
 
     fasterRCNN = set_up_bbox_extractor()
     extract_bbox_from_frame(

@@ -43,7 +43,7 @@ from model.utils.blob import im_list_to_blob
 from model.faster_rcnn.vgg16 import vgg16
 from model.faster_rcnn.resnet import resnet
 import pdb
-import h5py
+# import h5py
 
 try:
     xrange  # Python 2
@@ -228,9 +228,10 @@ if __name__ == '__main__':
         h5_dir = join(os.path.dirname(args.image_parent_dir), 'bbs_h5')
         os.makedirs(h5_dir, exist_ok=True)
 
-    n_processed, n_nobbox, n_skipped = 0, 0, 0
+    n_total, n_processed, n_error, n_nobbox, n_skipped = 0, 0, 0, 0, 0
     print(f'Processing {len(image_dirs)} frame dirs to extract bbox.')
     for image_dir in tqdm(image_dirs, desc=f'Going through {len(image_dirs)} image directories to extract bbox...'):
+        n_total += len(os.listdir(image_dir))
         video_num = image_dir.split('/')[-1]
         h5_file = None
         if args.save_h5:
@@ -245,11 +246,21 @@ if __name__ == '__main__':
         else:
             video_json_dir = join(args.json_save_dir, video_num)
             if os.path.exists(video_json_dir):
-                n_skipped += len(os.listdir(image_dir))
-                continue
-            os.makedirs(video_json_dir)
+                # determine skipping
+                json_files = os.listdir(video_json_dir)
+                if not json_files:
+                    n_skipped += len(os.listdir(image_dir))
+                    continue
+                random_json_path = join(video_json_dir, json_files[0])
+                with open(random_json_path, 'r') as f:
+                    random_json = json.load(f)
+                if 'hand_bbox_list' in random_json and 'contact_list' in random_json:
+                    n_skipped += len(os.listdir(image_dir))
+                    continue
 
-        # initilize the tensor holder here.
+            os.makedirs(video_json_dir, exist_ok=True)
+
+        # initialize the tensor holder here.
         im_data = torch.FloatTensor(1)
         im_info = torch.FloatTensor(1)
         num_boxes = torch.LongTensor(1)
@@ -300,8 +311,17 @@ if __name__ == '__main__':
                 if webcam_num == -1:
                     num_images -= 1
 
+                # conditions for skipping this image
                 if args.save_h5:
                     if str(imglist[num_images][:-4]) in h5_file:
+                        continue
+                frame_name = imglist[num_images].split('.')[0]
+                frame_json_path = join(video_json_dir, f'{frame_name}.json')
+                if os.path.exists(frame_json_path):
+                    with open(frame_json_path, 'r') as f:
+                        frame_json = json.load(f)
+                    if 'hand_bbox_list' in frame_json and 'contact_list' in frame_json:
+                        n_skipped += 1
                         continue
 
                 # Get image from the webcam
@@ -462,22 +482,22 @@ if __name__ == '__main__':
                     # print(f'No bounding box detected for {frame}.')
                     n_nobbox += 1
                     continue
-                js = {"image_path": join(image_dir, f'{frame}.jpg'),
-                      "body_bbox_list": [[]]}
+                js = {"image_path": join(image_dir, f'{frame}.jpg'), "body_bbox_list": [[]]}
                 if len(bbs[frame]) == 1:
                     hand = [int(bbs[frame][0][0]), int(bbs[frame][0][1]),
                             int(bbs[frame][0][2] - bbs[frame][0][0]),
                             int(bbs[frame][0][3] - bbs[frame][0][1])]
+                    contact = int(bbs[frame][0][5])
                     if bbs[frame][0][9] == 0:
-                        js["hand_bbox_list"] = [{"left_hand": hand,
-                                                 "right_hand": [],
-                                                 }]
+                        js["hand_bbox_list"] = [{"left_hand": hand, "right_hand": []}]
+                        js["contact_list"] = [{"left_hand": contact, "right_hand": -1}]
                     elif bbs[frame][0][9] == 1:
-                        js["hand_bbox_list"] = [{"left_hand": [],
-                                                 "right_hand": hand,
-                                                 }]
+                        js["hand_bbox_list"] = [{"left_hand": [], "right_hand": hand}]
+                        js["contact_list"] = [{"left_hand": -1, "right_hand": contact}]
                     else:
                         print("error")
+                        n_error += 1
+                        continue
 
                 elif len(bbs[frame]) == 2:
                     hand1 = [int(bbs[frame][0][0]), int(bbs[frame][0][1]),
@@ -486,18 +506,22 @@ if __name__ == '__main__':
                     hand2 = [int(bbs[frame][1][0]), int(bbs[frame][1][1]),
                              int(bbs[frame][1][2] - bbs[frame][1][0]),
                              int(bbs[frame][1][3] - bbs[frame][1][1])]
+                    contact1 = int(bbs[frame][0][5])
+                    contact2 = int(bbs[frame][1][5])
                     if bbs[frame][0][9] == 0:
-                        js["hand_bbox_list"] = [{"left_hand": hand1,
-                                                 "right_hand": hand2,
-                                                 }]
+                        js["hand_bbox_list"] = [{"left_hand": hand1, "right_hand": hand2}]
+                        js["contact_list"] = [{"left_hand": contact1, "right_hand": contact2}]
                     elif bbs[frame][0][9] == 1:
-                        js["hand_bbox_list"] = [{"left_hand": hand2,
-                                                 "right_hand": hand1,
-                                                 }]
+                        js["hand_bbox_list"] = [{"left_hand": hand2, "right_hand": hand1}]
+                        js["contact_list"] = [{"left_hand": contact2, "right_hand": contact1}]
                     else:
                         print("error")
+                        n_error += 1
+                        continue
                 else:
                     print("error")
+                    n_error += 1
+                    continue
 
                 if args.save_h5:
                     frame_group = h5_file[frame] if frame in h5_file else h5_file.create_group(frame)
@@ -515,8 +539,9 @@ if __name__ == '__main__':
         if args.save_h5:
             h5_file.close()
 
-    print(f'Converted frames to bounding boxes. '
-          f'Total frames: {n_processed + n_nobbox + n_skipped}; '
+    print(f'\nConverted frames to bounding boxes. \n'
+          f'Total frames: {n_total};'
           f'Processed frames: {n_processed}; '
+          f'Error frames: {n_error}; '
           f'No bbox frames: {n_nobbox}; '
           f'Skipped frames: {n_skipped}.')
